@@ -1,10 +1,7 @@
 'use client'
 
-import { getScoreColor } from '@/lib/utils'
-
 export default function ScoreGauge({ score }: { score: number }) {
   const s = Math.round(score)
-  const { bg, text } = getScoreColor(s)
   const pct = s / 100
   const radius = 54
   const circumference = 2 * Math.PI * radius
