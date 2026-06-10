@@ -1,0 +1,138 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  password  String
+  nom       String
+  role      Role     @default(recruteur)
+  actif     Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("users")
+}
+
+model Client {
+  id           Int      @id @default(autoincrement())
+  nom          String
+  secteur      String?
+  contactNom   String?  @map("contact_nom")
+  contactEmail String?  @map("contact_email")
+  telephone    String?
+  actif        Boolean  @default(true)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  mandats      Mandat[]
+
+  @@map("clients")
+}
+
+model Mandat {
+  id               Int          @id @default(autoincrement())
+  ref              String       @unique
+  clientId         Int          @map("client_id")
+  poste            String
+  lieu             String?
+  secteur          String?
+  mission          String?
+  descriptionOffre String?      @map("description_offre")
+  profilRequis     String?      @map("profil_requis")
+  datefinCollecte  DateTime?    @map("date_fin_collecte") @db.Date
+  statut           StatutMandat @default(actif)
+  driveFolderId    String?      @map("drive_folder_id")
+  nbPostes         Int          @default(1) @map("nb_postes")
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+  client           Client       @relation(fields: [clientId], references: [id])
+  candidatures     Candidature[]
+  shortlists       Shortlist[]
+
+  @@map("mandats")
+}
+
+model Candidature {
+  id                 Int               @id @default(autoincrement())
+  mandatId           Int               @map("mandat_id")
+  nom                String?
+  prenom             String?
+  email              String?
+  telephone          String?
+  nationalite        String?
+  genre              Genre             @default(Inconnu)
+  anneesExperience   Float?            @map("annees_experience") @db.DoublePrecision
+  niveauFormation    String?           @map("niveau_formation")
+  domaineFormation   String?           @map("domaine_formation")
+  dernierPoste       String?           @map("dernier_poste")
+  secteursExp        Json              @default("[]") @map("secteurs_exp")
+  certifications     Json              @default("[]")
+  langues            Json              @default("[]")
+  competencesCles    Json              @default("[]") @map("competences_cles")
+  pointsForts        Json              @default("[]") @map("points_forts")
+  pointsFaibles      Json              @default("[]") @map("points_faibles")
+  score              Float?            @db.DoublePrecision
+  scoreJustification String?           @map("score_justification")
+  recommendation     Recommendation    @default(A_ETUDIER)
+  cvUrl              String?           @map("cv_url")
+  statut             StatutCandidature @default(recu)
+  noteRecruteur      String?           @map("note_recruteur")
+  createdAt          DateTime          @default(now()) @map("created_at")
+  updatedAt          DateTime          @updatedAt @map("updated_at")
+  mandat             Mandat            @relation(fields: [mandatId], references: [id], onDelete: Cascade)
+  shortlists         Shortlist[]
+
+  @@map("candidatures")
+}
+
+model Shortlist {
+  id            Int         @id @default(autoincrement())
+  mandatId      Int         @map("mandat_id")
+  candidatureId Int         @map("candidature_id")
+  rang          Int?
+  noteHg        String?     @map("note_hg")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  mandat        Mandat      @relation(fields: [mandatId], references: [id], onDelete: Cascade)
+  candidature   Candidature @relation(fields: [candidatureId], references: [id], onDelete: Cascade)
+
+  @@unique([mandatId, candidatureId])
+  @@map("shortlists")
+}
+
+enum Role {
+  admin
+  recruteur
+}
+
+enum StatutMandat {
+  actif
+  cloture
+  archive
+}
+
+enum Genre {
+  M
+  F
+  Inconnu
+}
+
+enum Recommendation {
+  A_RETENIR
+  A_ETUDIER
+  NON_RETENU
+}
+
+enum StatutCandidature {
+  recu
+  en_etude
+  preselectionne
+  shortliste
+  rejete
+  embauche
+}
