@@ -4,6 +4,7 @@ const nextConfig = {
   images: {
     domains: [],
   },
+  transpilePackages: ['@react-pdf/renderer'],
 }
 
 export default nextConfig

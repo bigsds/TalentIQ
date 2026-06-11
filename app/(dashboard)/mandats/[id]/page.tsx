@@ -2,9 +2,10 @@ import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 import { auth } from '@/lib/auth'
 import Link from 'next/link'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, BarChart3 } from 'lucide-react'
 import { formatDate } from '@/lib/utils'
 import MandatDetailClient from '@/components/mandats/MandatDetailClient'
+import { Button } from '@/components/ui/button'
 
 async function getMandat(id: number) {
   const mandat = await prisma.mandat.findUnique({
@@ -82,6 +83,16 @@ export default async function MandatDetailPage({ params }: { params: { id: strin
                 </span>
               )}
               {mandat.secteur && <span>🏭 {mandat.secteur}</span>}
+            </div>
+            <div className="mt-4 flex gap-2">
+              <Link href={`/mandats/${mandat.id}/edit`}>
+                <Button variant="outline" size="sm">Modifier</Button>
+              </Link>
+              <Link href={`/rapports/${mandat.id}`}>
+                <Button variant="outline" size="sm" className="gap-1.5">
+                  <BarChart3 size={14} /> Rapport
+                </Button>
+              </Link>
             </div>
           </div>
         </div>
