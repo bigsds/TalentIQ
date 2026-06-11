@@ -1,10 +1,12 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pgvector(map: "vector")]
 }
 
 model User {
@@ -36,22 +38,22 @@ model Client {
 }
 
 model Mandat {
-  id               Int          @id @default(autoincrement())
-  ref              String       @unique
-  clientId         Int          @map("client_id")
+  id               Int           @id @default(autoincrement())
+  ref              String        @unique
+  clientId         Int           @map("client_id")
   poste            String
   lieu             String?
   secteur          String?
   mission          String?
-  descriptionOffre String?      @map("description_offre")
-  profilRequis     String?      @map("profil_requis")
-  datefinCollecte  DateTime?    @map("date_fin_collecte") @db.Date
-  statut           StatutMandat @default(actif)
-  driveFolderId    String?      @map("drive_folder_id")
-  nbPostes         Int          @default(1) @map("nb_postes")
-  createdAt        DateTime     @default(now()) @map("created_at")
-  updatedAt        DateTime     @updatedAt @map("updated_at")
-  client           Client       @relation(fields: [clientId], references: [id])
+  descriptionOffre String?       @map("description_offre")
+  profilRequis     String?       @map("profil_requis")
+  datefinCollecte  DateTime?     @map("date_fin_collecte") @db.Date
+  statut           StatutMandat  @default(actif)
+  driveFolderId    String?       @map("drive_folder_id")
+  nbPostes         Int           @default(1) @map("nb_postes")
+  createdAt        DateTime      @default(now()) @map("created_at")
+  updatedAt        DateTime      @updatedAt @map("updated_at")
+  client           Client        @relation(fields: [clientId], references: [id])
   candidatures     Candidature[]
   shortlists       Shortlist[]
 
@@ -87,8 +89,20 @@ model Candidature {
   updatedAt          DateTime          @updatedAt @map("updated_at")
   mandat             Mandat            @relation(fields: [mandatId], references: [id], onDelete: Cascade)
   shortlists         Shortlist[]
+  embedding          CandidatureEmbedding?
 
   @@map("candidatures")
+}
+
+model CandidatureEmbedding {
+  id            Int         @id @default(autoincrement())
+  candidatureId Int         @unique @map("candidature_id")
+  model         String      @default("text-embedding-3-small")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+  candidature   Candidature @relation(fields: [candidatureId], references: [id], onDelete: Cascade)
+
+  @@map("candidature_embeddings")
 }
 
 model Shortlist {
