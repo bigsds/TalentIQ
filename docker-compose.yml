@@ -1,0 +1,102 @@
+version: '3.8'
+
+services:
+  # ─── Base de données ────────────────────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: softtalent_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-hg_recrutement}
+      POSTGRES_USER: ${POSTGRES_USER:-hg_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hg_user} -d ${POSTGRES_DB:-hg_recrutement}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  # ─── SoftTalent (Next.js) ───────────────────────────────────────────────────
+  softtalent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: softtalent_app
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-hg_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hg_recrutement}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+      NEXTAUTH_URL: ${NEXTAUTH_URL}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH}
+      N8N_BASE_URL: ${N8N_BASE_URL:-}
+      N8N_WEBHOOK_NOUVEAU_MANDAT: ${N8N_WEBHOOK_NOUVEAU_MANDAT:-/webhook/hg-nouveau-mandat}
+      N8N_WEBHOOK_RECHERCHE: ${N8N_WEBHOOK_RECHERCHE:-/webhook/hg-recherche}
+      NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-SoftTalent}
+      NEXT_PUBLIC_CABINET_NOM: ${NEXT_PUBLIC_CABINET_NOM:-}
+      NEXT_PUBLIC_PRIMARY_COLOR: ${NEXT_PUBLIC_PRIMARY_COLOR:-#1F4E79}
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.softtalent.rule=Host(`${APP_DOMAIN}`)"
+      - "traefik.http.routers.softtalent.entrypoints=websecure"
+      - "traefik.http.routers.softtalent.tls.certresolver=letsencrypt"
+      - "traefik.http.services.softtalent.loadbalancer.server.port=3000"
+
+  # ─── N8n (workflows IA) ─────────────────────────────────────────────────────
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: softtalent_n8n
+    restart: unless-stopped
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-hg_recrutement}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER:-hg_user}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_POSTGRESDB_SCHEMA: n8n
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER:-admin}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD}
+      N8N_HOST: ${N8N_DOMAIN}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: https
+      WEBHOOK_URL: https://${N8N_DOMAIN}
+      GENERIC_TIMEZONE: Africa/Abidjan
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.n8n.rule=Host(`${N8N_DOMAIN}`)"
+      - "traefik.http.routers.n8n.entrypoints=websecure"
+      - "traefik.http.routers.n8n.tls.certresolver=letsencrypt"
+      - "traefik.http.services.n8n.loadbalancer.server.port=5678"
+
+networks:
+  proxy:
+    external: true
+  internal:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  n8n_data:
