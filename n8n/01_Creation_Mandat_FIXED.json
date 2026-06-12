@@ -1,0 +1,253 @@
+{
+  "name": "01 - Création Mandat",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "hg-nouveau-mandat",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "8a538438-d3e6-4655-a0af-5dfe3e2afbc8",
+      "name": "Webhook — Nouveau mandat",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "c8a4ced5-5247-4abf-91df-fa955c055d7c"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.all()[0].json.body || $input.all()[0].json;\n\nconst required = ['client_id', 'poste', 'date_fin_collecte'];\nconst missing = required.filter(f => !body[f] || String(body[f]).trim() === '');\n\nif (missing.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: `Champs obligatoires manquants : ${missing.join(', ')}`,\n      body: body\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    valid: true,\n    error: null,\n    client_id:         parseInt(body.client_id),\n    poste:             String(body.poste).trim(),\n    lieu:              String(body.lieu || '').trim(),\n    secteur:           String(body.secteur || '').trim(),\n    mission:           String(body.mission || '').trim(),\n    description_offre: String(body.description_offre || '').trim(),\n    profil_requis:     String(body.profil_requis || '').trim(),\n    date_fin_collecte: body.date_fin_collecte,\n    nb_postes:         parseInt(body.nb_postes) || 1\n  }\n}];"
+      },
+      "id": "36cf89b1-a47d-456c-a2e9-63ad3dababe3",
+      "name": "Valider les champs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [224, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "36cb5878-6b1e-4c19-8d78-b4ac422b3000",
+      "name": "Données valides ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [448, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: false, error: $json.error }) }}",
+        "options": {}
+      },
+      "id": "e847fbf0-2324-401b-881b-e04b333094c4",
+      "name": "Réponse 400 — Validation échouée",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [672, 160]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.all()[0].json;\nconst year = new Date().getFullYear();\n\nreturn [{\n  json: {\n    ...item,\n    year: year\n  }\n}];"
+      },
+      "id": "75778b72-a1ee-4bff-873b-76dcb89844f2",
+      "name": "Générer REF mandat",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [672, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(MAX(CAST(SPLIT_PART(ref, '-', 3) AS INTEGER)), 0) + 1 AS next_seq \nFROM mandats \nWHERE ref LIKE 'REF-' || EXTRACT(YEAR FROM NOW())::TEXT || '-%'",
+        "options": {}
+      },
+      "id": "c29175f6-ec70-40ac-b9cc-836999953177",
+      "name": "Postgres — Prochain numéro séquentiel",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [864, 0],
+      "credentials": {
+        "postgres": {
+          "id": "67iqF2mGI3zf7SDI",
+          "name": "hg_recrutement"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst seqRow = items[0].json;\nconst nextSeq = seqRow.next_seq || 1;\n\nconst validated = $node['Valider les champs'].json;\nconst year = new Date().getFullYear();\n\nconst seqPadded = String(nextSeq).padStart(3, '0');\nconst ref = `REF-${year}-${seqPadded}`;\n\nconst driveFolderName = `${ref} — ${validated.poste}`;\n\nreturn [{\n  json: {\n    ref: ref,\n    drive_folder_name: driveFolderName,\n    client_id:         validated.client_id,\n    poste:             validated.poste,\n    lieu:              validated.lieu,\n    secteur:           validated.secteur,\n    mission:           validated.mission,\n    description_offre: validated.description_offre,\n    profil_requis:     validated.profil_requis,\n    date_fin_collecte: validated.date_fin_collecte,\n    nb_postes:         validated.nb_postes\n  }\n}];"
+      },
+      "id": "39f395fb-4549-4d11-81be-bde7abdfbe8d",
+      "name": "Construire la REF finale",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1072, 0]
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "={{ $node['Construire la REF finale'].json.drive_folder_name }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "root",
+          "mode": "id",
+          "cachedResultName": "/ (Root folder)"
+        },
+        "options": {}
+      },
+      "id": "f940f965-3f89-4cd6-80bc-9ad0edff65f0",
+      "name": "Google Drive — Créer dossier mandat",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [1264, 0],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "t2fb90awI8bbbZx4",
+          "name": "roland.oued@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $node['Construire la REF finale'].json;\nconst drive = $input.all()[0].json;\n\nconst esc = (s) => String(s || '').replace(/'/g, \"''\");\n\nconst q = \"INSERT INTO mandats (ref, client_id, poste, lieu, secteur, mission, description_offre, profil_requis, date_fin_collecte, nb_postes, drive_folder_id, statut, created_at) VALUES ('\" + esc(data.ref) + \"', \" + parseInt(data.client_id) + \", '\" + esc(data.poste) + \"', '\" + esc(data.lieu) + \"', '\" + esc(data.secteur) + \"', '\" + esc(data.mission) + \"', '\" + esc(data.description_offre) + \"', '\" + esc(data.profil_requis) + \"', '\" + esc(data.date_fin_collecte) + \"'::date, \" + (parseInt(data.nb_postes) || 1) + \", '\" + esc(drive.id) + \"', 'actif', NOW()) RETURNING id, ref, drive_folder_id, poste\";\n\nreturn [{\n  json: {\n    insert_query: q,\n    ref: data.ref,\n    poste: data.poste,\n    drive_folder_id: drive.id\n  }\n}];"
+      },
+      "id": "b2c3d4e5-f6a7-8901-bcde-f23456789012",
+      "name": "Préparer INSERT mandat",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1472, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.insert_query }}",
+        "options": {}
+      },
+      "id": "36b7fadc-fa4e-4de5-99b9-2856a020e468",
+      "name": "Postgres — INSERT mandat",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [1680, 0],
+      "credentials": {
+        "postgres": {
+          "id": "67iqF2mGI3zf7SDI",
+          "name": "hg_recrutement"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({\n  success: true,\n  mandat_id: $json.id,\n  ref: $json.ref,\n  poste: $json.poste,\n  drive_folder_id: $json.drive_folder_id,\n  message: 'Mandat ' + $json.ref + ' créé avec succès'\n}) }}",
+        "options": {}
+      },
+      "id": "859dbdaa-fc1a-42f7-b699-1723469c2354",
+      "name": "Réponse 201 — Mandat créé",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1888, 0]
+    },
+    {
+      "parameters": {},
+      "id": "ae928f1d-31ec-4935-9348-a72bc3d1600a",
+      "name": "Gestion d'erreur globale",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [0, 224]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({\n  success: false,\n  error: 'Erreur interne. Veuillez réessayer.',\n  detail: $json.error?.message || 'Erreur inconnue'\n}) }}",
+        "options": {}
+      },
+      "id": "dadbd60c-e371-4431-8077-ae65e998c005",
+      "name": "Réponse 500 — Erreur serveur",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [224, 224]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook — Nouveau mandat": {
+      "main": [[{"node": "Valider les champs", "type": "main", "index": 0}]]
+    },
+    "Valider les champs": {
+      "main": [[{"node": "Données valides ?", "type": "main", "index": 0}]]
+    },
+    "Données valides ?": {
+      "main": [
+        [{"node": "Générer REF mandat", "type": "main", "index": 0}],
+        [{"node": "Réponse 400 — Validation échouée", "type": "main", "index": 0}]
+      ]
+    },
+    "Générer REF mandat": {
+      "main": [[{"node": "Postgres — Prochain numéro séquentiel", "type": "main", "index": 0}]]
+    },
+    "Postgres — Prochain numéro séquentiel": {
+      "main": [[{"node": "Construire la REF finale", "type": "main", "index": 0}]]
+    },
+    "Construire la REF finale": {
+      "main": [[{"node": "Google Drive — Créer dossier mandat", "type": "main", "index": 0}]]
+    },
+    "Google Drive — Créer dossier mandat": {
+      "main": [[{"node": "Préparer INSERT mandat", "type": "main", "index": 0}]]
+    },
+    "Préparer INSERT mandat": {
+      "main": [[{"node": "Postgres — INSERT mandat", "type": "main", "index": 0}]]
+    },
+    "Postgres — INSERT mandat": {
+      "main": [[{"node": "Réponse 201 — Mandat créé", "type": "main", "index": 0}]]
+    },
+    "Gestion d'erreur globale": {
+      "main": [[{"node": "Réponse 500 — Erreur serveur", "type": "main", "index": 0}]]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "timezone": "Africa/Ouagadougou",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "c8d7828b-b3cc-433a-8ed6-f9a7c34f5b71",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "cf44e465993d0556bc7c56b8b82e8f7c1a88dc687813f7c0e102eafad00d9b75"
+  },
+  "id": "4IFjgNZhXWdbtYvL",
+  "tags": []
+}

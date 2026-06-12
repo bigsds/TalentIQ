@@ -1,0 +1,470 @@
+{
+  "name": "02-Ingestion CV v2",
+  "nodes": [
+    {
+      "parameters": {
+        "downloadAttachments": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2.1,
+      "position": [-96, 432],
+      "id": "6255122f-7ec7-48fc-b3fb-626042dedf22",
+      "name": "Email Trigger (IMAP)",
+      "credentials": {
+        "imap": {
+          "id": "JbmvLXOo5VXGlUOc",
+          "name": "Sserge Ouedraogo - ForthInvestment"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.item.json;\nconst subject = item.subject || '';\nconst fromRaw = item.from || '';\n\nconst refMatch = subject.match(/\\[REF-([A-Z0-9-]+)\\]/i);\nconst ref = refMatch ? 'REF-' + refMatch[1].toUpperCase() : null;\n\nconst emailMatch = fromRaw.match(/<([^>]+)>/) || fromRaw.match(/([\\w.-]+@[\\w.-]+\\.[a-z]+)/);\nconst fromEmail = emailMatch ? emailMatch[1] : fromRaw;\n\nconst attachments = item.attachments || item.att || [];\nconst cvAttachments = attachments\n  .filter(att => {\n    const name = (att.name || att.filename || '').toLowerCase();\n    return name.endsWith('.pdf') || name.endsWith('.doc') || name.endsWith('.docx');\n  })\n  .map(att => ({\n    filename: att.name || att.filename || 'cv.pdf',\n    mimeType: att.mimeType || att.contentType || 'application/pdf',\n    size: att.size || 0\n  }));\n\nconst esc = (s) => String(s || '').replace(/'/g, \"''\");\nconst selectQuery = ref\n  ? \"SELECT m.id, m.ref, m.poste, m.lieu, m.secteur, m.mission, m.description_offre, m.profil_requis, m.date_fin_collecte, m.statut, m.drive_folder_id, c.nom AS client_nom FROM mandats m JOIN clients c ON c.id = m.client_id WHERE m.ref = '\" + esc(ref) + \"' LIMIT 1\"\n  : null;\n\nreturn [{\n  json: {\n    subject_original: subject,\n    sender_email: fromEmail,\n    mandat_ref: ref,\n    ref_found: ref !== null,\n    cv_count: cvAttachments.length,\n    cv_attachments: cvAttachments,\n    email_date: item.date || '',\n    select_query: selectQuery\n  },\n  binary: $input.item.binary\n}];"
+      },
+      "id": "618f7c2c-d294-484a-856d-a6d517ee87ed",
+      "name": "Extraire référence mandat",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [128, 432]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-ref",
+              "leftValue": "={{ $json.ref_found }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "adaf2371-769b-40ac-9e65-f408b6b0f101",
+      "name": "Référence mandat trouvée ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [352, 432]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.select_query }}",
+        "options": {}
+      },
+      "id": "65d69e2e-b552-41d8-9053-de6facb17ce0",
+      "name": "Postgres — Récupérer le mandat",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [576, 336],
+      "credentials": {
+        "postgres": {
+          "id": "67iqF2mGI3zf7SDI",
+          "name": "hg_recrutement"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const allItems = $input.all();\nif (allItems.length === 0) {\n  return [{ json: { mandat_found: false, mandat_active: false } }];\n}\nconst mandatData = allItems[0].json;\nif (!mandatData || !mandatData.id) {\n  return [{ json: { mandat_found: false, mandat_active: false } }];\n}\nconst emailData = $node['Extraire référence mandat'].json;\n\nconst binaryData = $node['Email Trigger (IMAP)'].binary || {};\nconst binaryKeys = Object.keys(binaryData);\nconst cvKeys = binaryKeys.filter(k => {\n  const mime = binaryData[k].mimeType || '';\n  const fname = (binaryData[k].fileName || binaryData[k].filename || '').toLowerCase();\n  return mime.includes('pdf') || mime.includes('word') ||\n         fname.endsWith('.pdf') || fname.endsWith('.doc') || fname.endsWith('.docx');\n});\n\nconst now = new Date();\nconst dateFin = mandatData.date_fin_collecte ? new Date(mandatData.date_fin_collecte) : null;\nconst isActive = mandatData.statut === 'actif';\nconst isOpen = dateFin ? now <= dateFin : true;\n\nreturn [{\n  json: {\n    mandat_found: true,\n    mandat_active: isActive && isOpen,\n    mandat_id: mandatData.id,\n    mandat_ref: mandatData.ref,\n    poste: mandatData.poste,\n    lieu: mandatData.lieu,\n    secteur: mandatData.secteur,\n    mission: mandatData.mission,\n    description_offre: mandatData.description_offre,\n    profil_requis: mandatData.profil_requis,\n    drive_folder_id: mandatData.drive_folder_id,\n    client_nom: mandatData.client_nom,\n    sender_email: emailData.sender_email,\n    subject_original: emailData.subject_original,\n    cv_count: cvKeys.length,\n    cv_binary_key: cvKeys[0] || null,\n    email_date: emailData.email_date\n  },\n  binary: $node['Email Trigger (IMAP)'].binary\n}];"
+      },
+      "id": "3b46baad-78c6-4fef-b149-6eecc7da4978",
+      "name": "Fusionner email + mandat",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [800, 336]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-active",
+              "leftValue": "={{ $json.mandat_active }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e413511a-800d-4567-8a27-4266dbcca277",
+      "name": "Mandat actif et ouvert ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1024, 336]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-cv",
+              "leftValue": "={{ $json.cv_count }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e433e881-4ff5-4042-8fdc-e59264a22ceb",
+      "name": "CV joint au mail ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1248, 240]
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "attachment_0",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [1472, 144],
+      "id": "336a7678-ea8c-4546-9cba-4370bfbde530",
+      "name": "Extract from File",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "text": "=={{ $json.text }}",
+        "schemaType": "fromJson",
+        "jsonSchemaExample": "{\n  \"nom\": \"Ouedraogo\",\n  \"prenom\": \"Roland\",\n  \"email\": \"roland@example.com\",\n  \"telephone\": \"+226 65 85 30 30\",\n  \"nationalite\": \"Burkinabé\",\n  \"genre\": \"M\",\n  \"annees_experience\": 11,\n  \"niveau_formation\": \"Master\",\n  \"domaine_formation\": \"Systèmes et Réseaux Informatique\",\n  \"dernier_poste\": \"Consultant en Réseau et Sécurité / Directeur Général\",\n  \"certifications\": [\"CCNP\", \"CCNA\", \"NSE4\", \"CompTIA Security+\"],\n  \"langues\": [\"Français\", \"Anglais\"],\n  \"competences_cles\": [\"Cisco\", \"Fortinet\", \"Firewall\", \"VPN\", \"BGP\"],\n  \"secteurs_exp\": [\"Banque\", \"Télécommunications\", \"Administration publique\"]\n}",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.informationExtractor",
+      "typeVersion": 1.2,
+      "position": [1696, 144],
+      "id": "b6f0ad50-a084-48a5-ba21-780a338e031c",
+      "name": "Information Extractor"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [1776, 368],
+      "id": "dcb3700a-f816-4413-9bf7-9aeee32152c1",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "F1M0yGsioCtmGv0G",
+          "name": "NewKey"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const extracted = $node['Information Extractor'].json.output;\nconst fusionData = $node['Fusionner email + mandat'].json;\n\nconst escapeSql = (str) => String(str || '').replace(/'/g, \"''\");\nconst escapeJson = (arr) => JSON.stringify(arr || []).replace(/'/g, \"''\");\n\nconst scoreResponse = $input.all()[0].json;\nconst analysisText = scoreResponse.choices?.[0]?.message?.content || '';\n\nlet scoring = {};\ntry {\n  const cleaned = analysisText.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  scoring = JSON.parse(cleaned);\n} catch(e) {\n  scoring = {\n    score: 0,\n    score_justification: 'Erreur parsing scoring',\n    points_forts: [],\n    points_faibles: [],\n    recommendation: 'A_ETUDIER'\n  };\n}\n\nconst score = Math.min(100, Math.max(0, parseFloat(scoring.score) || 0));\n\nconst genreRaw = String(extracted.genre || '').trim();\nlet genre = 'Inconnu';\nif (['M', 'm', 'Masculin', 'masculin', 'Male', 'male', 'Homme', 'homme'].includes(genreRaw)) {\n  genre = 'M';\n} else if (['F', 'f', 'Féminin', 'feminin', 'Féminine', 'Female', 'female', 'Femme', 'femme'].includes(genreRaw)) {\n  genre = 'F';\n}\n\nreturn [{\n  json: {\n    mandat_id: fusionData.mandat_id,\n    mandat_ref: fusionData.mandat_ref,\n    drive_folder_id: fusionData.drive_folder_id,\n    sender_email: fusionData.sender_email,\n    poste: fusionData.poste,\n    nom: escapeSql(extracted.nom || ''),\n    prenom: escapeSql(extracted.prenom || ''),\n    email_candidat: String(extracted.email || fusionData.sender_email || ''),\n    telephone: String(extracted.telephone || ''),\n    nationalite: escapeSql(extracted.nationalite || ''),\n    genre: genre,\n    annees_experience: Number(extracted.annees_experience || 0),\n    niveau_formation: escapeSql(extracted.niveau_formation || ''),\n    domaine_formation: escapeSql(extracted.domaine_formation || ''),\n    dernier_poste: escapeSql(extracted.dernier_poste || ''),\n    secteurs_exp: escapeJson(extracted.secteurs_exp || []),\n    certifications: escapeJson(extracted.certifications || []),\n    langues: escapeJson(extracted.langues || []),\n    competences_cles: escapeJson(extracted.competences_cles || []),\n    points_forts: escapeJson(scoring.points_forts || []),\n    points_faibles: escapeJson(scoring.points_faibles || []),\n    score: score,\n    score_justification: escapeSql(scoring.score_justification || ''),\n    recommendation: String(scoring.recommendation || 'A_ETUDIER')\n  },\n  binary: $node['Email Trigger (IMAP)'].binary\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2496, 144],
+      "id": "eddf4577-35f5-4d39-a4ea-3036a6feb07a",
+      "name": "Formatter candidature"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o\",\n  \"max_tokens\": 800,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Tu es un expert RH. Tu réponds UNIQUEMENT en JSON valide, sans markdown.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"={{ $json.prompt }}\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [2272, 144],
+      "id": "8c30ba67-e011-427c-9414-3cfff1c8a3d3",
+      "name": "Analyser & Scorer le CV",
+      "credentials": {
+        "openAiApi": {
+          "id": "F1M0yGsioCtmGv0G",
+          "name": "NewKey"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const extracted = $node['Information Extractor'].json.output;\nconst fusionData = $node['Fusionner email + mandat'].json;\n\nconst nom = (extracted.nom || '').replace(/\"/g, '');\nconst prenom = (extracted.prenom || '').replace(/\"/g, '');\nconst dernier_poste = (extracted.dernier_poste || '').replace(/\"/g, '');\nconst annees_exp = extracted.annees_experience || 0;\nconst formation = ((extracted.niveau_formation || '') + ' ' + (extracted.domaine_formation || '')).replace(/\"/g, '');\nconst secteurs = (extracted.secteurs_exp || []).join(', ').replace(/\"/g, '');\nconst competences = (extracted.competences_cles || []).join(', ').replace(/\"/g, '');\nconst poste = (fusionData.poste || '').replace(/\"/g, '');\nconst secteur = (fusionData.secteur || '').replace(/\"/g, '');\nconst profil = (fusionData.profil_requis || '').replace(/\"/g, '');\n\nconst prompt = \"Analyse ce profil candidat et evalue sa correspondance avec la fiche de poste. \" +\n  \"PROFIL : Nom : \" + nom + \" \" + prenom + \". \" +\n  \"Dernier poste : \" + dernier_poste + \". \" +\n  \"Experience : \" + annees_exp + \" ans. \" +\n  \"Formation : \" + formation + \". \" +\n  \"Secteurs : \" + secteurs + \". \" +\n  \"Competences : \" + competences + \". \" +\n  \"FICHE DE POSTE : Poste : \" + poste + \". \" +\n  \"Secteur : \" + secteur + \". \" +\n  \"Profil requis : \" + profil + \". \" +\n  \"SCORING SUR 100 POINTS STRICT : \" +\n\"Experiences similaires ou transposables 40pts, \" +\n\"Formation et diplomes pertinents 20pts, \" +\n\"Competences techniques requises 20pts, \" +\n\"Soft skills 10pts, \" +\n\"Adequation geographique 10pts. \" +\n\"REGLES ABSOLUES : \" +\n\"Score 75-100 ET experience directe dans le secteur = A_RETENIR. \" +\n\"Score 40-74 = A_ETUDIER. \" +\n\"Score 0-39 = NON_RETENU. \" +\n\"Ne jamais donner 100/100 sauf correspondance parfaite sur TOUS les criteres. \" +\n\"Penaliser absence de competences cles. \" +\n  \"Reponds UNIQUEMENT avec un objet JSON valide contenant : \" +\n  \"score (nombre entier), \" +\n  \"score_justification (texte factuel), \" +\n  \"points_forts (tableau de 4 elements max), \" +\n  \"points_faibles (tableau de 4 elements max), \" +\n  \"recommendation (A_RETENIR ou A_ETUDIER ou NON_RETENU).\";\n\nreturn [{\n  json: {\n    prompt: prompt,\n    mandat_id: fusionData.mandat_id,\n    mandat_ref: fusionData.mandat_ref,\n    drive_folder_id: fusionData.drive_folder_id,\n    sender_email: fusionData.sender_email,\n    poste: fusionData.poste\n  },\n  binary: $node['Email Trigger (IMAP)'].binary\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2048, 144],
+      "id": "861045cf-6d5d-4220-867c-d4affba92aab",
+      "name": "Préparer Prompt Scoring"
+    },
+    {
+      "parameters": {
+        "inputDataFieldName": "attachment_0",
+        "name": "={{ $json.nom + '_' + $json.prenom + '_' + $json.mandat_ref + '_' + $now.toFormat('yyyyMMdd') + '.pdf' }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $json.drive_folder_id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "cb66e688-2e00-4da2-bde5-b39e304876e6",
+      "name": "Google Drive — Upload CV",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [2720, 144],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "t2fb90awI8bbbZx4",
+          "name": "roland.oued@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $node['Formatter candidature'].json;\nconst drive = $input.all()[0].json;\n\nconst esc = (s) => String(s || '').replace(/'/g, \"''\");\n\nconst q = \"INSERT INTO candidatures (mandat_id, nom, prenom, email, telephone, nationalite, genre, annees_experience, niveau_formation, domaine_formation, dernier_poste, secteurs_exp, certifications, langues, competences_cles, points_forts, points_faibles, score, score_justification, recommendation, cv_url, statut, created_at) VALUES (\" +\n  data.mandat_id + \", '\" +\n  data.nom + \"', '\" +\n  data.prenom + \"', '\" +\n  esc(data.email_candidat) + \"', '\" +\n  esc(data.telephone) + \"', '\" +\n  data.nationalite + \"', '\" +\n  data.genre + \"', \" +\n  data.annees_experience + \", '\" +\n  data.niveau_formation + \"', '\" +\n  data.domaine_formation + \"', '\" +\n  data.dernier_poste + \"', '\" +\n  data.secteurs_exp + \"'::jsonb, '\" +\n  data.certifications + \"'::jsonb, '\" +\n  data.langues + \"'::jsonb, '\" +\n  data.competences_cles + \"'::jsonb, '\" +\n  data.points_forts + \"'::jsonb, '\" +\n  data.points_faibles + \"'::jsonb, \" +\n  data.score + \", '\" +\n  data.score_justification + \"', '\" +\n  data.recommendation + \"', '\" +\n  esc(drive.webViewLink || '') + \"', 'recu', NOW()) RETURNING id\";\n\nreturn [{\n  json: {\n    insert_query: q\n  }\n}];"
+      },
+      "id": "c1d2e3f4-a5b6-7890-cdef-123456789abc",
+      "name": "Préparer INSERT candidature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2944, 144]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.insert_query }}",
+        "options": {}
+      },
+      "id": "0a419b4b-b2d9-4175-aaac-201463263596",
+      "name": "Postgres — Enregistrer candidature",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [3168, 144],
+      "credentials": {
+        "postgres": {
+          "id": "67iqF2mGI3zf7SDI",
+          "name": "hg_recrutement"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "serge.ouedraogo@forthinvestment.com",
+        "toEmail": "={{ $node['Formatter candidature'].json.email_candidat }}",
+        "subject": "=Votre candidature au poste de {{ $node['Formatter candidature'].json.poste }} — Bien reçue ✓",
+        "html": "=Bonjour {{ $node['Formatter candidature'].json.prenom }} {{ $node['Formatter candidature'].json.nom }},\n\nNous avons bien reçu votre candidature pour le poste de {{ $node['Formatter candidature'].json.poste }} (Réf. {{ $node['Formatter candidature'].json.mandat_ref }}).\n\nVotre dossier va être étudié attentivement par notre équipe. Nous reviendrons vers vous dans les meilleurs délais.\n\nCordialement,\nL'équipe HG Recrutement",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [3392, 144],
+      "id": "d56138ed-9cc2-4c85-afa1-9b735482a108",
+      "name": "Mail - Accusé de réception",
+      "webhookId": "188857c7-af2f-4173-987a-0682e488da84",
+      "credentials": {
+        "smtp": {
+          "id": "tGNRFetAnZTBGypB",
+          "name": "Serge Forth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "serge.ouedraogo@forthinvestment.com",
+        "toEmail": "={{ $json.sender_email }}",
+        "subject": "Votre candidature — Référence d'offre manquante",
+        "emailFormat": "=text",
+        "text": "Bonjour,||Nous avons bien reçu votre candidature. Cependant, nous n'avons pas pu identifier l'offre d'emploi concernée.||Merci de renvoyer votre candidature en indiquant la référence de l'offre [REF-XXX] dans l'objet de votre mail.||Cordialement,|L'équipe HG Recrutement",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [576, 528],
+      "id": "d9a5c217-71c8-4bb6-b33c-7e6dde8888d5",
+      "name": "Mail - Référence Introuvable",
+      "webhookId": "3954936e-ea61-4bf8-85bf-23373a665a70",
+      "credentials": {
+        "smtp": {
+          "id": "tGNRFetAnZTBGypB",
+          "name": "Serge Forth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "serge.ouedraogo@forthinvestment.com",
+        "toEmail": "={{ $node['Extraire référence mandat'].json.sender_email }}",
+        "subject": "=Votre candidature au poste de {{ $json.poste }} — Offre clôturée",
+        "emailFormat": "text",
+        "text": "=Bonjour,||Nous avons bien reçu votre candidature pour le poste de {{ $json.poste }}.||Malheureusement, cette offre est désormais clôturée. Nous ne pourrons pas traiter votre dossier pour ce recrutement.||Votre CV sera conservé dans notre base de données et pourra être consulté pour de futures opportunités correspondant à votre profil.||Cordialement,|L'équipe HG Recrutement",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1248, 432],
+      "id": "e26d07a5-5905-4559-9a2b-d8b1212d1f39",
+      "name": "Mail - Offre clôturé",
+      "webhookId": "f6431e6e-9d97-4050-b236-394325ba9c00",
+      "credentials": {
+        "smtp": {
+          "id": "tGNRFetAnZTBGypB",
+          "name": "Serge Forth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "serge.ouedraogo@forthinvestment.com",
+        "toEmail": "={{ $json.sender_email }}",
+        "subject": "Votre candidature — Document CV manquant",
+        "emailFormat": "text",
+        "text": "=Bonjour,||Nous avons bien reçu votre message pour le poste de {{ $json.poste }} (Réf. {{ $json.mandat_ref }}).||Cependant, aucun CV en format PDF, DOC ou DOCX n'était joint à votre email. Merci de renvoyer votre candidature avec votre CV en pièce jointe.||Cordialement,|L'équipe HG Recrutement",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1472, 336],
+      "id": "fb4e485c-251b-4338-b8ca-fd4168aedd04",
+      "name": "Mail - CV Manquant",
+      "webhookId": "3bc815d6-036a-48a8-8033-b8c56ed35550",
+      "credentials": {
+        "smtp": {
+          "id": "tGNRFetAnZTBGypB",
+          "name": "Serge Forth"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Email Trigger (IMAP)": {
+      "main": [[{"node": "Extraire référence mandat", "type": "main", "index": 0}]]
+    },
+    "Extraire référence mandat": {
+      "main": [[{"node": "Référence mandat trouvée ?", "type": "main", "index": 0}]]
+    },
+    "Référence mandat trouvée ?": {
+      "main": [
+        [{"node": "Postgres — Récupérer le mandat", "type": "main", "index": 0}],
+        [{"node": "Mail - Référence Introuvable", "type": "main", "index": 0}]
+      ]
+    },
+    "Postgres — Récupérer le mandat": {
+      "main": [[{"node": "Fusionner email + mandat", "type": "main", "index": 0}]]
+    },
+    "Fusionner email + mandat": {
+      "main": [[{"node": "Mandat actif et ouvert ?", "type": "main", "index": 0}]]
+    },
+    "Mandat actif et ouvert ?": {
+      "main": [
+        [{"node": "CV joint au mail ?", "type": "main", "index": 0}],
+        [{"node": "Mail - Offre clôturé", "type": "main", "index": 0}]
+      ]
+    },
+    "CV joint au mail ?": {
+      "main": [
+        [{"node": "Extract from File", "type": "main", "index": 0}],
+        [{"node": "Mail - CV Manquant", "type": "main", "index": 0}]
+      ]
+    },
+    "Extract from File": {
+      "main": [[{"node": "Information Extractor", "type": "main", "index": 0}]]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [[{"node": "Information Extractor", "type": "ai_languageModel", "index": 0}]]
+    },
+    "Information Extractor": {
+      "main": [[{"node": "Préparer Prompt Scoring", "type": "main", "index": 0}]]
+    },
+    "Préparer Prompt Scoring": {
+      "main": [[{"node": "Analyser & Scorer le CV", "type": "main", "index": 0}]]
+    },
+    "Analyser & Scorer le CV": {
+      "main": [[{"node": "Formatter candidature", "type": "main", "index": 0}]]
+    },
+    "Formatter candidature": {
+      "main": [[{"node": "Google Drive — Upload CV", "type": "main", "index": 0}]]
+    },
+    "Google Drive — Upload CV": {
+      "main": [[{"node": "Préparer INSERT candidature", "type": "main", "index": 0}]]
+    },
+    "Préparer INSERT candidature": {
+      "main": [[{"node": "Postgres — Enregistrer candidature", "type": "main", "index": 0}]]
+    },
+    "Postgres — Enregistrer candidature": {
+      "main": [[{"node": "Mail - Accusé de réception", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "timezone": "Africa/Ouagadougou",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "8a4509e1-0bc3-4657-95fc-abebf1a54f4c",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "cf44e465993d0556bc7c56b8b82e8f7c1a88dc687813f7c0e102eafad00d9b75"
+  },
+  "id": "mGDZraxoL0kmK5ri",
+  "tags": []
+}
