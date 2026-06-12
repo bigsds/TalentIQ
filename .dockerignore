@@ -9,4 +9,3 @@ node_modules
 README.md
 docker/postgres
 scripts
-prisma/migrations
