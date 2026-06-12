@@ -1,7 +1,20 @@
 version: '3.8'
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# SoftTalent — docker-compose.yml (production)
+#
+# Adapté pour un VPS avec Traefik + N8n déjà en place.
+# Ce fichier déploie uniquement : PostgreSQL+pgvector + SoftTalent (Next.js)
+#
+# ⚙️  Avant de lancer :
+#   1. Copier .env.example en .env et remplir toutes les valeurs
+#   2. Vérifier le nom du réseau Traefik : docker inspect root-traefik-1 \
+#        --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}\n{{end}}'
+#   3. Remplacer TRAEFIK_NETWORK ci-dessous par le vrai nom si différent de "proxy"
+# ═══════════════════════════════════════════════════════════════════════════════
+
 services:
-  # ─── Base de données ────────────────────────────────────────────────────────
+  # ─── Base de données (PostgreSQL + pgvector) ────────────────────────────────
   postgres:
     image: pgvector/pgvector:pg16
     container_name: softtalent_postgres
@@ -33,7 +46,7 @@ services:
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
       NEXTAUTH_URL: ${NEXTAUTH_URL}
       ADMIN_EMAIL: ${ADMIN_EMAIL}
-      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
       N8N_BASE_URL: ${N8N_BASE_URL:-}
       N8N_WEBHOOK_NOUVEAU_MANDAT: ${N8N_WEBHOOK_NOUVEAU_MANDAT:-/webhook/hg-nouveau-mandat}
       N8N_WEBHOOK_RECHERCHE: ${N8N_WEBHOOK_RECHERCHE:-/webhook/hg-recherche}
@@ -46,57 +59,28 @@ services:
         condition: service_healthy
     networks:
       - internal
-      - proxy
+      - traefik_network   # ← remplace par le vrai nom du réseau Traefik
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.softtalent.rule=Host(`${APP_DOMAIN}`)"
       - "traefik.http.routers.softtalent.entrypoints=websecure"
       - "traefik.http.routers.softtalent.tls.certresolver=letsencrypt"
       - "traefik.http.services.softtalent.loadbalancer.server.port=3000"
-
-  # ─── N8n (workflows IA) ─────────────────────────────────────────────────────
-  n8n:
-    image: docker.n8n.io/n8nio/n8n:latest
-    container_name: softtalent_n8n
-    restart: unless-stopped
-    environment:
-      DB_TYPE: postgresdb
-      DB_POSTGRESDB_HOST: postgres
-      DB_POSTGRESDB_PORT: 5432
-      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-hg_recrutement}
-      DB_POSTGRESDB_USER: ${POSTGRES_USER:-hg_user}
-      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
-      DB_POSTGRESDB_SCHEMA: n8n
-      N8N_BASIC_AUTH_ACTIVE: "true"
-      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER:-admin}
-      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD}
-      N8N_HOST: ${N8N_DOMAIN}
-      N8N_PORT: 5678
-      N8N_PROTOCOL: https
-      WEBHOOK_URL: https://${N8N_DOMAIN}
-      GENERIC_TIMEZONE: Africa/Abidjan
-      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
-    volumes:
-      - n8n_data:/home/node/.n8n
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - internal
-      - proxy
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.n8n.rule=Host(`${N8N_DOMAIN}`)"
-      - "traefik.http.routers.n8n.entrypoints=websecure"
-      - "traefik.http.routers.n8n.tls.certresolver=letsencrypt"
-      - "traefik.http.services.n8n.loadbalancer.server.port=5678"
+      - "traefik.docker.network=traefik_network"   # ← même valeur
 
 networks:
-  proxy:
+  # Réseau Traefik existant — vérifier le nom avec :
+  # docker inspect root-traefik-1 --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}\n{{end}}'
+  traefik_network:   # ← remplacer si différent de "proxy"
     external: true
+    name: ${TRAEFIK_NETWORK:-proxy}   # configurable via .env
+
+  # Réseau interne entre softtalent et postgres
+  # Le N8n existant doit être connecté à ce réseau pour accéder à la DB
+  # Après le déploiement : docker network connect softtalent_internal n8n
   internal:
+    name: softtalent_internal
     driver: bridge
 
 volumes:
   postgres_data:
-  n8n_data:
