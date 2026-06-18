@@ -25,4 +25,6 @@ export const n8n = {
     callWebhook(process.env.N8N_WEBHOOK_NOUVEAU_MANDAT || '/webhook/hg-nouveau-mandat', payload),
   recherche: (payload: unknown) =>
     callWebhook(process.env.N8N_WEBHOOK_RECHERCHE || '/webhook/hg-recherche', payload),
+  importCvsBatch: (payload: { mandat_id: number; file_ids: string[] }) =>
+    callWebhook(process.env.N8N_WEBHOOK_IMPORT_BATCH || '/webhook/hg-import-cvs-batch', payload),
 }

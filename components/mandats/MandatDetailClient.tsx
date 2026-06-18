@@ -4,11 +4,12 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { toast } from 'sonner'
-import { Eye, Star, XCircle, FileText, Search } from 'lucide-react'
+import { Eye, Star, XCircle, FileText, Search, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import ScoreBadge from '@/components/candidats/ScoreBadge'
 import RecommendationBadge from '@/components/candidats/RecommendationBadge'
 import ConfirmDialog from '@/components/shared/ConfirmDialog'
@@ -42,6 +43,9 @@ export default function MandatDetailClient({ mandat }: MandatDetailClientProps) 
   const [sortBy, setSortBy] = useState('score')
   const [page, setPage] = useState(1)
   const [confirmAction, setConfirmAction] = useState<{ type: 'shortlist' | 'reject'; candidatureId: number; nom: string } | null>(null)
+  const [importOpen, setImportOpen] = useState(false)
+  const [importText, setImportText] = useState('')
+  const [importing, setImporting] = useState(false)
 
   const { data, isLoading } = useQuery({
     queryKey: ['candidatures', mandat.id, { search, recFilter, sortBy, page }],
@@ -103,6 +107,38 @@ export default function MandatDetailClient({ mandat }: MandatDetailClientProps) 
     onError: () => toast.error('Erreur lors du rejet'),
   })
 
+  async function handleImport() {
+    const fileIds = importText
+      .split(/[\n,;]+/)
+      .map(s => s.trim())
+      .filter(Boolean)
+
+    if (fileIds.length === 0) {
+      toast.error('Aucun identifiant Google Drive valide')
+      return
+    }
+    setImporting(true)
+    try {
+      const res = await fetch('/api/mandats/import-cvs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mandat_id: mandat.id, file_ids: fileIds }),
+      })
+      const json = await res.json()
+      if (json.success) {
+        toast.success(json.message)
+        setImportOpen(false)
+        setImportText('')
+      } else {
+        toast.warning(json.warning || json.error || 'Import non lancé')
+      }
+    } catch {
+      toast.error('Erreur lors du lancement de l\'import')
+    } finally {
+      setImporting(false)
+    }
+  }
+
   const candidatures: CandidatureRow[] = data?.candidatures ?? []
   const total: number = data?.total ?? 0
   const totalPages = Math.ceil(total / 20)
@@ -132,6 +168,14 @@ export default function MandatDetailClient({ mandat }: MandatDetailClientProps) 
                 className="pl-9"
               />
             </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 border-[#1F4E79] text-[#1F4E79] hover:bg-[#1F4E79] hover:text-white"
+              onClick={() => setImportOpen(true)}
+            >
+              <Upload size={14} /> Importer CVs
+            </Button>
             <Select value={recFilter || 'all'} onValueChange={v => { setRecFilter(v === 'all' ? '' : v); setPage(1) }}>
               <SelectTrigger className="w-40">
                 <SelectValue placeholder="Recommandation" />
@@ -321,6 +365,43 @@ export default function MandatDetailClient({ mandat }: MandatDetailClientProps) 
         loading={rejectMutation.isPending}
         onConfirm={() => confirmAction && rejectMutation.mutate(confirmAction.candidatureId)}
       />
+
+      {/* Import CVs en masse */}
+      <Dialog open={importOpen} onOpenChange={setImportOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="font-jakarta text-[#1E293B]">Importer des CVs depuis Google Drive</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            <p className="text-sm text-[#64748B]">
+              Collez les <span className="font-medium">identifiants Google Drive</span> des fichiers PDF à traiter
+              (un par ligne, ou séparés par des virgules). L&apos;extraction, le scoring et la vectorisation seront lancés automatiquement.
+            </p>
+            <div className="bg-[#F8FAFC] rounded-lg p-3 text-xs text-[#64748B] font-mono border border-[#E2E8F0]">
+              <p className="font-sans font-medium text-[#475569] mb-1">Comment obtenir l&apos;ID d&apos;un fichier Drive ?</p>
+              <p>URL : drive.google.com/file/d/<span className="text-[#1F4E79] font-semibold">1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs</span>/view</p>
+            </div>
+            <textarea
+              className="w-full h-36 rounded-lg border border-[#E2E8F0] px-3 py-2 text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-[#1F4E79]/30"
+              placeholder={"1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs\n1XyZ9kLmNpQrStUvWxYz1234567890ab\n..."}
+              value={importText}
+              onChange={e => setImportText(e.target.value)}
+            />
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setImportOpen(false)} disabled={importing}>
+                Annuler
+              </Button>
+              <Button
+                className="bg-[#1F4E79] hover:bg-[#1a3f61] text-white gap-1.5"
+                onClick={handleImport}
+                disabled={importing || !importText.trim()}
+              >
+                {importing ? 'Lancement...' : <><Upload size={14} /> Lancer l&apos;import</>}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   )
 }

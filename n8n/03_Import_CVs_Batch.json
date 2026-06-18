@@ -1,0 +1,348 @@
+{
+  "name": "03 - Import CVs en Masse",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "hg-import-cvs-batch",
+        "responseMode": "onReceived",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "w3-0001-webhook",
+      "name": "Webhook — Import CVs",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "d4e5f6a7-b8c9-0123-def0-456789abcdef"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.all()[0].json.body || $input.all()[0].json;\n\nconst mandatId = parseInt(body.mandat_id);\nif (!mandatId || isNaN(mandatId)) {\n  throw new Error('mandat_id est requis et doit être un entier');\n}\n\nconst fileIds = body.file_ids;\nif (!Array.isArray(fileIds) || fileIds.length === 0) {\n  throw new Error('file_ids doit être un tableau non vide d\\'IDs Google Drive');\n}\n\nconst selectQuery = \"SELECT m.id, m.ref, m.poste, m.lieu, m.secteur, m.mission, m.description_offre, m.profil_requis, m.drive_folder_id FROM mandats m WHERE m.id = \" + mandatId + \" LIMIT 1\";\n\nreturn [{\n  json: {\n    mandat_id: mandatId,\n    file_ids: fileIds,\n    select_query: selectQuery\n  }\n}];"
+      },
+      "id": "w3-0002-validate",
+      "name": "Valider et préparer requête",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [224, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.select_query }}",
+        "options": {}
+      },
+      "id": "w3-0003-get-mandat",
+      "name": "Postgres — Récupérer mandat",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [448, 0],
+      "credentials": {
+        "postgres": {
+          "id": "67iqF2mGI3zf7SDI",
+          "name": "hg_recrutement"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const mandat = $input.all()[0].json;\nif (!mandat || !mandat.id) {\n  throw new Error('Mandat introuvable ou inactif');\n}\n\nconst fileIds = $node['Valider et préparer requête'].json.file_ids;\n\nreturn fileIds.map(fileId => ({\n  json: {\n    file_id: fileId,\n    cv_url: 'https://drive.google.com/file/d/' + fileId + '/view',\n    mandat_id: mandat.id,\n    mandat_ref: mandat.ref,\n    poste: mandat.poste || '',\n    lieu: mandat.lieu || '',\n    secteur: mandat.secteur || '',\n    mission: mandat.mission || '',\n    description_offre: mandat.description_offre || '',\n    profil_requis: mandat.profil_requis || '',\n    drive_folder_id: mandat.drive_folder_id || null\n  }\n}));"
+      },
+      "id": "w3-0004-prep-files",
+      "name": "Préparer fichiers à traiter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [672, 0]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.file_id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "w3-0005-drive-dl",
+      "name": "Google Drive — Télécharger CV",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [896, 0],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "t2fb90awI8bbbZx4",
+          "name": "roland.oued@gmail.com"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "data",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [1120, 0],
+      "id": "w3-0006-extract-pdf",
+      "name": "Extract from File",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "text": "=={{ $json.text }}",
+        "schemaType": "fromJson",
+        "jsonSchemaExample": "{\n  \"nom\": \"Ouedraogo\",\n  \"prenom\": \"Roland\",\n  \"email\": \"roland@example.com\",\n  \"telephone\": \"+226 65 85 30 30\",\n  \"nationalite\": \"Burkinabé\",\n  \"genre\": \"M\",\n  \"annees_experience\": 11,\n  \"niveau_formation\": \"Master\",\n  \"domaine_formation\": \"Systèmes et Réseaux Informatique\",\n  \"dernier_poste\": \"Consultant en Réseau et Sécurité\",\n  \"certifications\": [\"CCNP\", \"CCNA\"],\n  \"langues\": [\"Français\", \"Anglais\"],\n  \"competences_cles\": [\"Cisco\", \"Fortinet\", \"Firewall\", \"VPN\"],\n  \"secteurs_exp\": [\"Banque\", \"Télécommunications\"]\n}",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.informationExtractor",
+      "typeVersion": 1.2,
+      "position": [1344, 0],
+      "id": "w3-0007-info-extractor",
+      "name": "Information Extractor"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [1344, 224],
+      "id": "w3-0008-openai-model",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "F1M0yGsioCtmGv0G",
+          "name": "NewKey"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const extracted = $node['Information Extractor'].json.output;\nconst fileData = $node['Préparer fichiers à traiter'].json;\n\nconst nom = (extracted.nom || '').replace(/\"/g, '');\nconst prenom = (extracted.prenom || '').replace(/\"/g, '');\nconst dernier_poste = (extracted.dernier_poste || '').replace(/\"/g, '');\nconst annees_exp = extracted.annees_experience || 0;\nconst formation = ((extracted.niveau_formation || '') + ' ' + (extracted.domaine_formation || '')).replace(/\"/g, '');\nconst secteurs = (extracted.secteurs_exp || []).join(', ').replace(/\"/g, '');\nconst competences = (extracted.competences_cles || []).join(', ').replace(/\"/g, '');\nconst poste = (fileData.poste || '').replace(/\"/g, '');\nconst secteur = (fileData.secteur || '').replace(/\"/g, '');\nconst profil = (fileData.profil_requis || '').replace(/\"/g, '');\n\nconst prompt = \"Analyse ce profil candidat et evalue sa correspondance avec la fiche de poste. \" +\n  \"PROFIL : Nom : \" + nom + \" \" + prenom + \". \" +\n  \"Dernier poste : \" + dernier_poste + \". \" +\n  \"Experience : \" + annees_exp + \" ans. \" +\n  \"Formation : \" + formation + \". \" +\n  \"Secteurs : \" + secteurs + \". \" +\n  \"Competences : \" + competences + \". \" +\n  \"FICHE DE POSTE : Poste : \" + poste + \". \" +\n  \"Secteur : \" + secteur + \". \" +\n  \"Profil requis : \" + profil + \". \" +\n  \"SCORING SUR 100 POINTS STRICT : \" +\n  \"Experiences similaires ou transposables 40pts, \" +\n  \"Formation et diplomes pertinents 20pts, \" +\n  \"Competences techniques requises 20pts, \" +\n  \"Soft skills 10pts, \" +\n  \"Adequation geographique 10pts. \" +\n  \"REGLES ABSOLUES : \" +\n  \"Score 75-100 ET experience directe dans le secteur = A_RETENIR. \" +\n  \"Score 40-74 = A_ETUDIER. \" +\n  \"Score 0-39 = NON_RETENU. \" +\n  \"Ne jamais donner 100/100 sauf correspondance parfaite sur TOUS les criteres. \" +\n  \"Penaliser absence de competences cles. \" +\n  \"Reponds UNIQUEMENT avec un objet JSON valide contenant : \" +\n  \"score (nombre entier), \" +\n  \"score_justification (texte factuel), \" +\n  \"points_forts (tableau de 4 elements max), \" +\n  \"points_faibles (tableau de 4 elements max), \" +\n  \"recommendation (A_RETENIR ou A_ETUDIER ou NON_RETENU).\";\n\nreturn [{\n  json: {\n    prompt: prompt,\n    mandat_id: fileData.mandat_id,\n    mandat_ref: fileData.mandat_ref,\n    drive_folder_id: fileData.drive_folder_id,\n    poste: fileData.poste,\n    file_id: fileData.file_id\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1568, 0],
+      "id": "w3-0009-prep-scoring",
+      "name": "Préparer Prompt Scoring"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o\",\n  \"max_tokens\": 800,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Tu es un expert RH. Tu réponds UNIQUEMENT en JSON valide, sans markdown.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"={{ $json.prompt }}\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1792, 0],
+      "id": "w3-0010-scorer",
+      "name": "Analyser & Scorer le CV",
+      "credentials": {
+        "openAiApi": {
+          "id": "F1M0yGsioCtmGv0G",
+          "name": "NewKey"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const extracted = $node['Information Extractor'].json.output;\nconst fileData = $node['Préparer fichiers à traiter'].json;\n\nconst escapeSql = (str) => String(str || '').replace(/'/g, \"''\");\nconst escapeJson = (arr) => JSON.stringify(arr || []).replace(/'/g, \"''\");\n\nconst scoreResponse = $input.all()[0].json;\nconst analysisText = scoreResponse.choices?.[0]?.message?.content || '';\n\nlet scoring = {};\ntry {\n  const cleaned = analysisText.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  scoring = JSON.parse(cleaned);\n} catch(e) {\n  scoring = {\n    score: 0,\n    score_justification: 'Erreur parsing scoring',\n    points_forts: [],\n    points_faibles: [],\n    recommendation: 'A_ETUDIER'\n  };\n}\n\nconst score = Math.min(100, Math.max(0, parseFloat(scoring.score) || 0));\n\nconst genreRaw = String(extracted.genre || '').trim();\nlet genre = 'Inconnu';\nif (['M', 'm', 'Masculin', 'masculin', 'Male', 'male', 'Homme', 'homme'].includes(genreRaw)) {\n  genre = 'M';\n} else if (['F', 'f', 'Féminin', 'feminin', 'Féminine', 'Female', 'female', 'Femme', 'femme'].includes(genreRaw)) {\n  genre = 'F';\n}\n\nreturn [{\n  json: {\n    mandat_id: fileData.mandat_id,\n    mandat_ref: fileData.mandat_ref,\n    drive_folder_id: fileData.drive_folder_id,\n    cv_url: fileData.cv_url,\n    poste: fileData.poste,\n    nom: escapeSql(extracted.nom || ''),\n    prenom: escapeSql(extracted.prenom || ''),\n    email_candidat: String(extracted.email || ''),\n    telephone: String(extracted.telephone || ''),\n    nationalite: escapeSql(extracted.nationalite || ''),\n    genre: genre,\n    annees_experience: Number(extracted.annees_experience || 0),\n    niveau_formation: escapeSql(extracted.niveau_formation || ''),\n    domaine_formation: escapeSql(extracted.domaine_formation || ''),\n    dernier_poste: escapeSql(extracted.dernier_poste || ''),\n    secteurs_exp: escapeJson(extracted.secteurs_exp || []),\n    certifications: escapeJson(extracted.certifications || []),\n    langues: escapeJson(extracted.langues || []),\n    competences_cles: escapeJson(extracted.competences_cles || []),\n    points_forts: escapeJson(scoring.points_forts || []),\n    points_faibles: escapeJson(scoring.points_faibles || []),\n    score: score,\n    score_justification: escapeSql(scoring.score_justification || ''),\n    recommendation: String(scoring.recommendation || 'A_ETUDIER'),\n    secteurs_exp_raw: extracted.secteurs_exp || [],\n    competences_cles_raw: extracted.competences_cles || []\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2016, 0],
+      "id": "w3-0011-formatter",
+      "name": "Formatter candidature"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.all()[0].json;\nconst esc = (s) => String(s || '').replace(/'/g, \"''\");\n\nconst q = \"INSERT INTO candidatures (mandat_id, nom, prenom, email, telephone, nationalite, genre, annees_experience, niveau_formation, domaine_formation, dernier_poste, secteurs_exp, certifications, langues, competences_cles, points_forts, points_faibles, score, score_justification, recommendation, cv_url, statut, created_at) VALUES (\" +\n  data.mandat_id + \", '\" +\n  data.nom + \"', '\" +\n  data.prenom + \"', '\" +\n  esc(data.email_candidat) + \"', '\" +\n  esc(data.telephone) + \"', '\" +\n  data.nationalite + \"', '\" +\n  data.genre + \"', \" +\n  data.annees_experience + \", '\" +\n  data.niveau_formation + \"', '\" +\n  data.domaine_formation + \"', '\" +\n  data.dernier_poste + \"', '\" +\n  data.secteurs_exp + \"'::jsonb, '\" +\n  data.certifications + \"'::jsonb, '\" +\n  data.langues + \"'::jsonb, '\" +\n  data.competences_cles + \"'::jsonb, '\" +\n  data.points_forts + \"'::jsonb, '\" +\n  data.points_faibles + \"'::jsonb, \" +\n  data.score + \", '\" +\n  data.score_justification + \"', '\" +\n  data.recommendation + \"', '\" +\n  esc(data.cv_url) + \"', 'recu', NOW()) RETURNING id\";\n\nreturn [{ json: { insert_query: q } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2240, 0],
+      "id": "w3-0012-prep-insert",
+      "name": "Préparer INSERT candidature"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.insert_query }}",
+        "options": {}
+      },
+      "id": "w3-0013-pg-insert",
+      "name": "Postgres — Enregistrer candidature",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [2464, 0],
+      "credentials": {
+        "postgres": {
+          "id": "67iqF2mGI3zf7SDI",
+          "name": "hg_recrutement"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const formatterData = $node['Formatter candidature'].json;\nconst candidature_id = $node['Postgres — Enregistrer candidature'].json.id;\n\nconst secteurs = formatterData.secteurs_exp_raw || [];\nconst competences = formatterData.competences_cles_raw || [];\n\nconst text = [\n  'Poste : ' + formatterData.poste,\n  formatterData.annees_experience + ' ans d\\'expérience',\n  formatterData.dernier_poste ? 'Dernier poste : ' + formatterData.dernier_poste : '',\n  formatterData.niveau_formation ? 'Formation : ' + formatterData.niveau_formation + ' ' + formatterData.domaine_formation : '',\n  competences.length > 0 ? 'Compétences : ' + competences.join(', ') : '',\n  secteurs.length > 0 ? 'Secteurs : ' + secteurs.join(', ') : '',\n  formatterData.nationalite ? 'Nationalité : ' + formatterData.nationalite : ''\n].filter(s => s && s.trim()).join('. ');\n\nreturn [{\n  json: {\n    embedding_text: text,\n    candidature_id: candidature_id\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2688, 0],
+      "id": "w3-0014-prep-embed",
+      "name": "Préparer texte embedding"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"text-embedding-3-small\",\n  \"input\": \"={{ $json.embedding_text }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [2912, 0],
+      "id": "w3-0015-embed-api",
+      "name": "Générer embedding OpenAI",
+      "credentials": {
+        "openAiApi": {
+          "id": "F1M0yGsioCtmGv0G",
+          "name": "NewKey"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const embeddingResp = $input.all()[0].json;\nconst prepData = $node['Préparer texte embedding'].json;\nconst candidature_id = prepData.candidature_id;\n\nconst embedding = embeddingResp.data?.[0]?.embedding;\nif (!embedding || !Array.isArray(embedding)) {\n  throw new Error('Embedding invalide reçu de OpenAI pour candidature ' + candidature_id);\n}\n\nconst vectorStr = '[' + embedding.join(',') + ']';\n\nconst q = \"INSERT INTO candidature_embeddings (candidature_id, embedding, model, created_at, updated_at) VALUES (\" +\n  candidature_id + \", '\" + vectorStr + \"'::vector, 'text-embedding-3-small', NOW(), NOW()) \" +\n  \"ON CONFLICT (candidature_id) DO UPDATE SET embedding = EXCLUDED.embedding, updated_at = NOW()\";\n\nreturn [{ json: { insert_query: q, candidature_id: candidature_id } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3136, 0],
+      "id": "w3-0016-prep-embed-insert",
+      "name": "Préparer INSERT embedding"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.insert_query }}",
+        "options": {}
+      },
+      "id": "w3-0017-pg-embed",
+      "name": "Postgres — Enregistrer embedding",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [3360, 0],
+      "credentials": {
+        "postgres": {
+          "id": "67iqF2mGI3zf7SDI",
+          "name": "hg_recrutement"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook — Import CVs": {
+      "main": [[{"node": "Valider et préparer requête", "type": "main", "index": 0}]]
+    },
+    "Valider et préparer requête": {
+      "main": [[{"node": "Postgres — Récupérer mandat", "type": "main", "index": 0}]]
+    },
+    "Postgres — Récupérer mandat": {
+      "main": [[{"node": "Préparer fichiers à traiter", "type": "main", "index": 0}]]
+    },
+    "Préparer fichiers à traiter": {
+      "main": [[{"node": "Google Drive — Télécharger CV", "type": "main", "index": 0}]]
+    },
+    "Google Drive — Télécharger CV": {
+      "main": [[{"node": "Extract from File", "type": "main", "index": 0}]]
+    },
+    "Extract from File": {
+      "main": [[{"node": "Information Extractor", "type": "main", "index": 0}]]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [[{"node": "Information Extractor", "type": "ai_languageModel", "index": 0}]]
+    },
+    "Information Extractor": {
+      "main": [[{"node": "Préparer Prompt Scoring", "type": "main", "index": 0}]]
+    },
+    "Préparer Prompt Scoring": {
+      "main": [[{"node": "Analyser & Scorer le CV", "type": "main", "index": 0}]]
+    },
+    "Analyser & Scorer le CV": {
+      "main": [[{"node": "Formatter candidature", "type": "main", "index": 0}]]
+    },
+    "Formatter candidature": {
+      "main": [[{"node": "Préparer INSERT candidature", "type": "main", "index": 0}]]
+    },
+    "Préparer INSERT candidature": {
+      "main": [[{"node": "Postgres — Enregistrer candidature", "type": "main", "index": 0}]]
+    },
+    "Postgres — Enregistrer candidature": {
+      "main": [[{"node": "Préparer texte embedding", "type": "main", "index": 0}]]
+    },
+    "Préparer texte embedding": {
+      "main": [[{"node": "Générer embedding OpenAI", "type": "main", "index": 0}]]
+    },
+    "Générer embedding OpenAI": {
+      "main": [[{"node": "Préparer INSERT embedding", "type": "main", "index": 0}]]
+    },
+    "Préparer INSERT embedding": {
+      "main": [[{"node": "Postgres — Enregistrer embedding", "type": "main", "index": 0}]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "timezone": "Africa/Ouagadougou",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "cf44e465993d0556bc7c56b8b82e8f7c1a88dc687813f7c0e102eafad00d9b75"
+  },
+  "id": "w3ImportCVsBatch01",
+  "tags": []
+}
