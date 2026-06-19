@@ -20,7 +20,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const item = $input.item.json;\nconst subject = item.subject || '';\nconst fromRaw = item.from || '';\n\nconst refMatch = subject.match(/\\[REF-([A-Z0-9-]+)\\]/i);\nconst ref = refMatch ? 'REF-' + refMatch[1].toUpperCase() : null;\n\nconst emailMatch = fromRaw.match(/<([^>]+)>/) || fromRaw.match(/([\\w.-]+@[\\w.-]+\\.[a-z]+)/);\nconst fromEmail = emailMatch ? emailMatch[1] : fromRaw;\n\nconst attachments = item.attachments || item.att || [];\nconst cvAttachments = attachments\n  .filter(att => {\n    const name = (att.name || att.filename || '').toLowerCase();\n    return name.endsWith('.pdf') || name.endsWith('.doc') || name.endsWith('.docx');\n  })\n  .map(att => ({\n    filename: att.name || att.filename || 'cv.pdf',\n    mimeType: att.mimeType || att.contentType || 'application/pdf',\n    size: att.size || 0\n  }));\n\nconst esc = (s) => String(s || '').replace(/'/g, \"''\");\nconst selectQuery = ref\n  ? \"SELECT m.id, m.ref, m.poste, m.lieu, m.secteur, m.mission, m.description_offre, m.profil_requis, m.date_fin_collecte, m.statut, m.drive_folder_id, c.nom AS client_nom FROM mandats m JOIN clients c ON c.id = m.client_id WHERE m.ref = '\" + esc(ref) + \"' LIMIT 1\"\n  : null;\n\nreturn [{\n  json: {\n    subject_original: subject,\n    sender_email: fromEmail,\n    mandat_ref: ref,\n    ref_found: ref !== null,\n    cv_count: cvAttachments.length,\n    cv_attachments: cvAttachments,\n    email_date: item.date || '',\n    select_query: selectQuery\n  },\n  binary: $input.item.binary\n}];"
+        "jsCode": "// FIX: ajout de select_query pour éviter le bug de paramétrage Postgres v2\nconst item = $input.item.json;\nconst subject = item.subject || '';\nconst fromRaw = item.from || '';\n\nconst refMatch = subject.match(/\\[REF-([A-Z0-9-]+)\\]/i);\nconst ref = refMatch ? 'REF-' + refMatch[1].toUpperCase() : null;\n\nconst emailMatch = fromRaw.match(/<([^>]+)>/) || fromRaw.match(/([\\w.-]+@[\\w.-]+\\.[a-z]+)/);\nconst fromEmail = emailMatch ? emailMatch[1] : fromRaw;\n\nconst attachments = item.attachments || item.att || [];\nconst cvAttachments = attachments\n  .filter(att => {\n    const name = (att.name || att.filename || '').toLowerCase();\n    return name.endsWith('.pdf') || name.endsWith('.doc') || name.endsWith('.docx');\n  })\n  .map(att => ({\n    filename: att.name || att.filename || 'cv.pdf',\n    mimeType: att.mimeType || att.contentType || 'application/pdf',\n    size: att.size || 0\n  }));\n\nconst esc = (s) => String(s || '').replace(/'/g, \"''\");\nconst selectQuery = ref\n  ? \"SELECT m.id, m.ref, m.poste, m.lieu, m.secteur, m.mission, m.description_offre, m.profil_requis, m.date_fin_collecte, m.statut, m.drive_folder_id, c.nom AS client_nom FROM mandats m JOIN clients c ON c.id = m.client_id WHERE m.ref = '\" + esc(ref) + \"' LIMIT 1\"\n  : null;\n\nreturn [{\n  json: {\n    subject_original: subject,\n    sender_email: fromEmail,\n    mandat_ref: ref,\n    ref_found: ref !== null,\n    cv_count: cvAttachments.length,\n    cv_attachments: cvAttachments,\n    email_date: item.date || '',\n    select_query: selectQuery\n  },\n  binary: $input.item.binary\n}];"
       },
       "id": "618f7c2c-d294-484a-856d-a6d517ee87ed",
       "name": "Extraire référence mandat",
@@ -197,13 +197,13 @@
     },
     {
       "parameters": {
-        "jsCode": "const extracted = $node['Information Extractor'].json.output;\nconst fusionData = $node['Fusionner email + mandat'].json;\n\nconst escapeSql = (str) => String(str || '').replace(/'/g, \"''\");\nconst escapeJson = (arr) => JSON.stringify(arr || []).replace(/'/g, \"''\");\n\nconst scoreResponse = $input.all()[0].json;\nconst analysisText = scoreResponse.choices?.[0]?.message?.content || '';\n\nlet scoring = {};\ntry {\n  const cleaned = analysisText.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  scoring = JSON.parse(cleaned);\n} catch(e) {\n  scoring = {\n    score: 0,\n    score_justification: 'Erreur parsing scoring',\n    points_forts: [],\n    points_faibles: [],\n    recommendation: 'A_ETUDIER'\n  };\n}\n\nconst score = Math.min(100, Math.max(0, parseFloat(scoring.score) || 0));\n\nconst genreRaw = String(extracted.genre || '').trim();\nlet genre = 'Inconnu';\nif (['M', 'm', 'Masculin', 'masculin', 'Male', 'male', 'Homme', 'homme'].includes(genreRaw)) {\n  genre = 'M';\n} else if (['F', 'f', 'Féminin', 'feminin', 'Féminine', 'Female', 'female', 'Femme', 'femme'].includes(genreRaw)) {\n  genre = 'F';\n}\n\nreturn [{\n  json: {\n    mandat_id: fusionData.mandat_id,\n    mandat_ref: fusionData.mandat_ref,\n    drive_folder_id: fusionData.drive_folder_id,\n    sender_email: fusionData.sender_email,\n    poste: fusionData.poste,\n    nom: escapeSql(extracted.nom || ''),\n    prenom: escapeSql(extracted.prenom || ''),\n    email_candidat: String(extracted.email || fusionData.sender_email || ''),\n    telephone: String(extracted.telephone || ''),\n    nationalite: escapeSql(extracted.nationalite || ''),\n    genre: genre,\n    annees_experience: Number(extracted.annees_experience || 0),\n    niveau_formation: escapeSql(extracted.niveau_formation || ''),\n    domaine_formation: escapeSql(extracted.domaine_formation || ''),\n    dernier_poste: escapeSql(extracted.dernier_poste || ''),\n    secteurs_exp: escapeJson(extracted.secteurs_exp || []),\n    certifications: escapeJson(extracted.certifications || []),\n    langues: escapeJson(extracted.langues || []),\n    competences_cles: escapeJson(extracted.competences_cles || []),\n    points_forts: escapeJson(scoring.points_forts || []),\n    points_faibles: escapeJson(scoring.points_faibles || []),\n    score: score,\n    score_justification: escapeSql(scoring.score_justification || ''),\n    recommendation: String(scoring.recommendation || 'A_ETUDIER')\n  },\n  binary: $node['Email Trigger (IMAP)'].binary\n}];"
+        "jsCode": "const extracted = $node['Information Extractor'].json.output;\nconst fusionData = $node['Fusionner email + mandat'].json;\n\nconst nom = (extracted.nom || '').replace(/\"/g, '');\nconst prenom = (extracted.prenom || '').replace(/\"/g, '');\nconst dernier_poste = (extracted.dernier_poste || '').replace(/\"/g, '');\nconst annees_exp = extracted.annees_experience || 0;\nconst formation = ((extracted.niveau_formation || '') + ' ' + (extracted.domaine_formation || '')).replace(/\"/g, '');\nconst secteurs = (extracted.secteurs_exp || []).join(', ').replace(/\"/g, '');\nconst competences = (extracted.competences_cles || []).join(', ').replace(/\"/g, '');\nconst poste = (fusionData.poste || '').replace(/\"/g, '');\nconst secteur = (fusionData.secteur || '').replace(/\"/g, '');\nconst profil = (fusionData.profil_requis || '').replace(/\"/g, '');\n\nconst prompt = \"Analyse ce profil candidat et evalue sa correspondance avec la fiche de poste. \" +\n  \"PROFIL : Nom : \" + nom + \" \" + prenom + \". \" +\n  \"Dernier poste : \" + dernier_poste + \". \" +\n  \"Experience : \" + annees_exp + \" ans. \" +\n  \"Formation : \" + formation + \". \" +\n  \"Secteurs : \" + secteurs + \". \" +\n  \"Competences : \" + competences + \". \" +\n  \"FICHE DE POSTE : Poste : \" + poste + \". \" +\n  \"Secteur : \" + secteur + \". \" +\n  \"Profil requis : \" + profil + \". \" +\n  \"SCORING SUR 100 POINTS STRICT : \" +\n  \"Experiences similaires ou transposables 40pts, \" +\n  \"Formation et diplomes pertinents 20pts, \" +\n  \"Competences techniques requises 20pts, \" +\n  \"Soft skills 10pts, \" +\n  \"Adequation geographique 10pts. \" +\n  \"REGLES ABSOLUES : \" +\n  \"Score 75-100 ET experience directe dans le secteur = A_RETENIR. \" +\n  \"Score 40-74 = A_ETUDIER. \" +\n  \"Score 0-39 = NON_RETENU. \" +\n  \"Ne jamais donner 100/100 sauf correspondance parfaite sur TOUS les criteres. \" +\n  \"Penaliser absence de competences cles. \" +\n  \"Reponds UNIQUEMENT avec un objet JSON valide contenant : \" +\n  \"score (nombre entier), \" +\n  \"score_justification (texte factuel), \" +\n  \"points_forts (tableau de 4 elements max), \" +\n  \"points_faibles (tableau de 4 elements max), \" +\n  \"recommendation (A_RETENIR ou A_ETUDIER ou NON_RETENU).\";\n\nreturn [{\n  json: {\n    prompt: prompt,\n    mandat_id: fusionData.mandat_id,\n    mandat_ref: fusionData.mandat_ref,\n    drive_folder_id: fusionData.drive_folder_id,\n    sender_email: fusionData.sender_email,\n    poste: fusionData.poste\n  },\n  binary: $node['Email Trigger (IMAP)'].binary\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2496, 144],
-      "id": "eddf4577-35f5-4d39-a4ea-3036a6feb07a",
-      "name": "Formatter candidature"
+      "position": [2048, 144],
+      "id": "861045cf-6d5d-4220-867c-d4affba92aab",
+      "name": "Préparer Prompt Scoring"
     },
     {
       "parameters": {
@@ -239,13 +239,13 @@
     },
     {
       "parameters": {
-        "jsCode": "const extracted = $node['Information Extractor'].json.output;\nconst fusionData = $node['Fusionner email + mandat'].json;\n\nconst nom = (extracted.nom || '').replace(/\"/g, '');\nconst prenom = (extracted.prenom || '').replace(/\"/g, '');\nconst dernier_poste = (extracted.dernier_poste || '').replace(/\"/g, '');\nconst annees_exp = extracted.annees_experience || 0;\nconst formation = ((extracted.niveau_formation || '') + ' ' + (extracted.domaine_formation || '')).replace(/\"/g, '');\nconst secteurs = (extracted.secteurs_exp || []).join(', ').replace(/\"/g, '');\nconst competences = (extracted.competences_cles || []).join(', ').replace(/\"/g, '');\nconst poste = (fusionData.poste || '').replace(/\"/g, '');\nconst secteur = (fusionData.secteur || '').replace(/\"/g, '');\nconst profil = (fusionData.profil_requis || '').replace(/\"/g, '');\n\nconst prompt = \"Analyse ce profil candidat et evalue sa correspondance avec la fiche de poste. \" +\n  \"PROFIL : Nom : \" + nom + \" \" + prenom + \". \" +\n  \"Dernier poste : \" + dernier_poste + \". \" +\n  \"Experience : \" + annees_exp + \" ans. \" +\n  \"Formation : \" + formation + \". \" +\n  \"Secteurs : \" + secteurs + \". \" +\n  \"Competences : \" + competences + \". \" +\n  \"FICHE DE POSTE : Poste : \" + poste + \". \" +\n  \"Secteur : \" + secteur + \". \" +\n  \"Profil requis : \" + profil + \". \" +\n  \"SCORING SUR 100 POINTS STRICT : \" +\n\"Experiences similaires ou transposables 40pts, \" +\n\"Formation et diplomes pertinents 20pts, \" +\n\"Competences techniques requises 20pts, \" +\n\"Soft skills 10pts, \" +\n\"Adequation geographique 10pts. \" +\n\"REGLES ABSOLUES : \" +\n\"Score 75-100 ET experience directe dans le secteur = A_RETENIR. \" +\n\"Score 40-74 = A_ETUDIER. \" +\n\"Score 0-39 = NON_RETENU. \" +\n\"Ne jamais donner 100/100 sauf correspondance parfaite sur TOUS les criteres. \" +\n\"Penaliser absence de competences cles. \" +\n  \"Reponds UNIQUEMENT avec un objet JSON valide contenant : \" +\n  \"score (nombre entier), \" +\n  \"score_justification (texte factuel), \" +\n  \"points_forts (tableau de 4 elements max), \" +\n  \"points_faibles (tableau de 4 elements max), \" +\n  \"recommendation (A_RETENIR ou A_ETUDIER ou NON_RETENU).\";\n\nreturn [{\n  json: {\n    prompt: prompt,\n    mandat_id: fusionData.mandat_id,\n    mandat_ref: fusionData.mandat_ref,\n    drive_folder_id: fusionData.drive_folder_id,\n    sender_email: fusionData.sender_email,\n    poste: fusionData.poste\n  },\n  binary: $node['Email Trigger (IMAP)'].binary\n}];"
+        "jsCode": "// FIX: genre mapping élargi (M/F/Masculin/Féminin...)\n// FIX: ajout secteurs_exp_raw et competences_cles_raw pour l'embedding\nconst extracted = $node['Information Extractor'].json.output;\nconst fusionData = $node['Fusionner email + mandat'].json;\n\nconst escapeSql = (str) => String(str || '').replace(/'/g, \"''\");\nconst escapeJson = (arr) => JSON.stringify(arr || []).replace(/'/g, \"''\");\n\nconst scoreResponse = $input.all()[0].json;\nconst analysisText = scoreResponse.choices?.[0]?.message?.content || '';\n\nlet scoring = {};\ntry {\n  const cleaned = analysisText.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  scoring = JSON.parse(cleaned);\n} catch(e) {\n  scoring = {\n    score: 0,\n    score_justification: 'Erreur parsing scoring',\n    points_forts: [],\n    points_faibles: [],\n    recommendation: 'A_ETUDIER'\n  };\n}\n\nconst score = Math.min(100, Math.max(0, parseFloat(scoring.score) || 0));\n\nconst genreRaw = String(extracted.genre || '').trim();\nlet genre = 'Inconnu';\nif (['M', 'm', 'Masculin', 'masculin', 'Male', 'male', 'Homme', 'homme'].includes(genreRaw)) {\n  genre = 'M';\n} else if (['F', 'f', 'Féminin', 'feminin', 'Féminine', 'Female', 'female', 'Femme', 'femme'].includes(genreRaw)) {\n  genre = 'F';\n}\n\nreturn [{\n  json: {\n    mandat_id: fusionData.mandat_id,\n    mandat_ref: fusionData.mandat_ref,\n    drive_folder_id: fusionData.drive_folder_id,\n    sender_email: fusionData.sender_email,\n    poste: fusionData.poste,\n    nom: escapeSql(extracted.nom || ''),\n    prenom: escapeSql(extracted.prenom || ''),\n    email_candidat: String(extracted.email || fusionData.sender_email || ''),\n    telephone: String(extracted.telephone || ''),\n    nationalite: escapeSql(extracted.nationalite || ''),\n    genre: genre,\n    annees_experience: Number(extracted.annees_experience || 0),\n    niveau_formation: escapeSql(extracted.niveau_formation || ''),\n    domaine_formation: escapeSql(extracted.domaine_formation || ''),\n    dernier_poste: escapeSql(extracted.dernier_poste || ''),\n    secteurs_exp: escapeJson(extracted.secteurs_exp || []),\n    certifications: escapeJson(extracted.certifications || []),\n    langues: escapeJson(extracted.langues || []),\n    competences_cles: escapeJson(extracted.competences_cles || []),\n    points_forts: escapeJson(scoring.points_forts || []),\n    points_faibles: escapeJson(scoring.points_faibles || []),\n    score: score,\n    score_justification: escapeSql(scoring.score_justification || ''),\n    recommendation: String(scoring.recommendation || 'A_ETUDIER'),\n    secteurs_exp_raw: extracted.secteurs_exp || [],\n    competences_cles_raw: extracted.competences_cles || []\n  },\n  binary: $node['Email Trigger (IMAP)'].binary\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2048, 144],
-      "id": "861045cf-6d5d-4220-867c-d4affba92aab",
-      "name": "Préparer Prompt Scoring"
+      "position": [2496, 144],
+      "id": "eddf4577-35f5-4d39-a4ea-3036a6feb07a",
+      "name": "Formatter candidature"
     },
     {
       "parameters": {
@@ -277,7 +277,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const data = $node['Formatter candidature'].json;\nconst drive = $input.all()[0].json;\n\nconst esc = (s) => String(s || '').replace(/'/g, \"''\");\n\nconst q = \"INSERT INTO candidatures (mandat_id, nom, prenom, email, telephone, nationalite, genre, annees_experience, niveau_formation, domaine_formation, dernier_poste, secteurs_exp, certifications, langues, competences_cles, points_forts, points_faibles, score, score_justification, recommendation, cv_url, statut, created_at) VALUES (\" +\n  data.mandat_id + \", '\" +\n  data.nom + \"', '\" +\n  data.prenom + \"', '\" +\n  esc(data.email_candidat) + \"', '\" +\n  esc(data.telephone) + \"', '\" +\n  data.nationalite + \"', '\" +\n  data.genre + \"', \" +\n  data.annees_experience + \", '\" +\n  data.niveau_formation + \"', '\" +\n  data.domaine_formation + \"', '\" +\n  data.dernier_poste + \"', '\" +\n  data.secteurs_exp + \"'::jsonb, '\" +\n  data.certifications + \"'::jsonb, '\" +\n  data.langues + \"'::jsonb, '\" +\n  data.competences_cles + \"'::jsonb, '\" +\n  data.points_forts + \"'::jsonb, '\" +\n  data.points_faibles + \"'::jsonb, \" +\n  data.score + \", '\" +\n  data.score_justification + \"', '\" +\n  data.recommendation + \"', '\" +\n  esc(drive.webViewLink || '') + \"', 'recu', NOW()) RETURNING id\";\n\nreturn [{\n  json: {\n    insert_query: q\n  }\n}];"
+        "jsCode": "// FIX: construit le SQL complet pour éviter le bug $1/$2 de Postgres v2\nconst data = $node['Formatter candidature'].json;\nconst drive = $input.all()[0].json;\n\nconst esc = (s) => String(s || '').replace(/'/g, \"''\");\n\nconst q = \"INSERT INTO candidatures (mandat_id, nom, prenom, email, telephone, nationalite, genre, annees_experience, niveau_formation, domaine_formation, dernier_poste, secteurs_exp, certifications, langues, competences_cles, points_forts, points_faibles, score, score_justification, recommendation, cv_url, statut, created_at) VALUES (\" +\n  data.mandat_id + \", '\" +\n  data.nom + \"', '\" +\n  data.prenom + \"', '\" +\n  esc(data.email_candidat) + \"', '\" +\n  esc(data.telephone) + \"', '\" +\n  data.nationalite + \"', '\" +\n  data.genre + \"', \" +\n  data.annees_experience + \", '\" +\n  data.niveau_formation + \"', '\" +\n  data.domaine_formation + \"', '\" +\n  data.dernier_poste + \"', '\" +\n  data.secteurs_exp + \"'::jsonb, '\" +\n  data.certifications + \"'::jsonb, '\" +\n  data.langues + \"'::jsonb, '\" +\n  data.competences_cles + \"'::jsonb, '\" +\n  data.points_forts + \"'::jsonb, '\" +\n  data.points_faibles + \"'::jsonb, \" +\n  data.score + \", '\" +\n  data.score_justification + \"', '\" +\n  data.recommendation + \"', '\" +\n  esc(drive.webViewLink || '') + \"', 'recu', NOW()) RETURNING id\";\n\nreturn [{ json: { insert_query: q } }];"
       },
       "id": "c1d2e3f4-a5b6-7890-cdef-123456789abc",
       "name": "Préparer INSERT candidature",
@@ -305,6 +305,76 @@
     },
     {
       "parameters": {
+        "jsCode": "// NOUVEAU: prépare le texte à vectoriser pour la recherche sémantique\nconst formatterData = $node['Formatter candidature'].json;\nconst candidature_id = $node['Postgres — Enregistrer candidature'].json.id;\n\nconst secteurs = formatterData.secteurs_exp_raw || [];\nconst competences = formatterData.competences_cles_raw || [];\n\nconst text = [\n  'Poste : ' + formatterData.poste,\n  formatterData.annees_experience + ' ans d\\'expérience',\n  formatterData.dernier_poste ? 'Dernier poste : ' + formatterData.dernier_poste : '',\n  formatterData.niveau_formation ? 'Formation : ' + formatterData.niveau_formation + ' ' + formatterData.domaine_formation : '',\n  competences.length > 0 ? 'Compétences : ' + competences.join(', ') : '',\n  secteurs.length > 0 ? 'Secteurs : ' + secteurs.join(', ') : '',\n  formatterData.nationalite ? 'Nationalité : ' + formatterData.nationalite : ''\n].filter(s => s && s.trim()).join('. ');\n\nreturn [{\n  json: {\n    embedding_text: text,\n    candidature_id: candidature_id\n  }\n}];"
+      },
+      "id": "e1f2a3b4-c5d6-7890-efab-234567890cde",
+      "name": "Préparer texte embedding",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3392, 144]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/embeddings",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"text-embedding-3-small\",\n  \"input\": \"={{ $json.embedding_text }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [3616, 144],
+      "id": "f3a4b5c6-d7e8-9012-fab3-456789012def",
+      "name": "Générer embedding OpenAI",
+      "credentials": {
+        "openAiApi": {
+          "id": "F1M0yGsioCtmGv0G",
+          "name": "NewKey"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// NOUVEAU: convertit le tableau de 1536 floats en format vector PostgreSQL\nconst embeddingResp = $input.all()[0].json;\nconst prepData = $node['Préparer texte embedding'].json;\nconst candidature_id = prepData.candidature_id;\n\nconst embedding = embeddingResp.data?.[0]?.embedding;\nif (!embedding || !Array.isArray(embedding)) {\n  throw new Error('Embedding invalide reçu de OpenAI pour candidature ' + candidature_id);\n}\n\nconst vectorStr = '[' + embedding.join(',') + ']';\n\nconst q = \"INSERT INTO candidature_embeddings (candidature_id, embedding, model, created_at, updated_at) VALUES (\" +\n  candidature_id + \", '\" + vectorStr + \"'::vector, 'text-embedding-3-small', NOW(), NOW()) \" +\n  \"ON CONFLICT (candidature_id) DO UPDATE SET embedding = EXCLUDED.embedding, updated_at = NOW()\";\n\nreturn [{ json: { insert_query: q, candidature_id: candidature_id } }];"
+      },
+      "id": "b4c5d6e7-f8a9-0123-bcde-567890123abc",
+      "name": "Préparer INSERT embedding",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3840, 144]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.insert_query }}",
+        "options": {}
+      },
+      "id": "a5b6c7d8-e9f0-1234-abcd-678901234bcd",
+      "name": "Postgres — Enregistrer embedding",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [4064, 144],
+      "credentials": {
+        "postgres": {
+          "id": "67iqF2mGI3zf7SDI",
+          "name": "hg_recrutement"
+        }
+      }
+    },
+    {
+      "parameters": {
         "fromEmail": "serge.ouedraogo@forthinvestment.com",
         "toEmail": "={{ $node['Formatter candidature'].json.email_candidat }}",
         "subject": "=Votre candidature au poste de {{ $node['Formatter candidature'].json.poste }} — Bien reçue ✓",
@@ -313,7 +383,7 @@
       },
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2.1,
-      "position": [3392, 144],
+      "position": [4288, 144],
       "id": "d56138ed-9cc2-4c85-afa1-9b735482a108",
       "name": "Mail - Accusé de réception",
       "webhookId": "188857c7-af2f-4173-987a-0682e488da84",
@@ -448,6 +518,18 @@
       "main": [[{"node": "Postgres — Enregistrer candidature", "type": "main", "index": 0}]]
     },
     "Postgres — Enregistrer candidature": {
+      "main": [[{"node": "Préparer texte embedding", "type": "main", "index": 0}]]
+    },
+    "Préparer texte embedding": {
+      "main": [[{"node": "Générer embedding OpenAI", "type": "main", "index": 0}]]
+    },
+    "Générer embedding OpenAI": {
+      "main": [[{"node": "Préparer INSERT embedding", "type": "main", "index": 0}]]
+    },
+    "Préparer INSERT embedding": {
+      "main": [[{"node": "Postgres — Enregistrer embedding", "type": "main", "index": 0}]]
+    },
+    "Postgres — Enregistrer embedding": {
       "main": [[{"node": "Mail - Accusé de réception", "type": "main", "index": 0}]]
     }
   },
