@@ -37,7 +37,8 @@ export async function POST(req: NextRequest) {
   // Generate query embedding via OpenAI
   let embedding: number[]
   try {
-    const embRes = await fetch('https://api.openai.com/v1/embeddings', {
+    const openaiBaseUrl = process.env.OPENAI_BASE_URL || 'https://api.openai.com'
+    const embRes = await fetch(`${openaiBaseUrl}/v1/embeddings`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -67,7 +68,7 @@ export async function POST(req: NextRequest) {
     where += ` AND c.score >= ${Number(scoreMin)}`
   }
   if (secteur && secteur !== 'all') {
-    where += ` AND c.secteurs_exp @> '["${esc(String(secteur))}"]'::jsonb`
+    where += ` AND c.secteurs_exp @> '${esc(JSON.stringify([String(secteur)]))}'::jsonb`
   }
 
   const sql = `
